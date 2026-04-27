@@ -86,6 +86,11 @@ class AntroGrid extends HTMLElement {
           right: 1px;
           cursor: pointer;
       }
+      .lock {
+          bottom: 1px;
+          left: 1px;
+          cursor: pointer;
+      }
       .none {
           display: none;
       }
@@ -142,6 +147,16 @@ class AntroGrid extends HTMLElement {
     });
   }
 
+  _getComputedPosition(el) {
+    const elPos = el.getBoundingClientRect();
+    const gridPos = this.grid.getBoundingClientRect();
+    const colWidth = this.getColumnWidth(false);
+    const gap = this._gap;
+    const gridColumn = Math.round((elPos.left - gridPos.left) / (colWidth + gap)) + 1;
+    const gridRow = Math.round((elPos.top - gridPos.top) / (colWidth + gap)) + 1 ;
+    return { gridColumn, gridRow };
+  }
+
   _wrapElement(el) {
     const existingWrap = el.parentElement ? el.parentElement.parentElement : null;
     if (existingWrap && existingWrap.classList.contains('item-wrapper')) {
@@ -183,27 +198,66 @@ class AntroGrid extends HTMLElement {
       this._items = this._items.filter(i => i.wrap !== wrap);
     });
 
+
+    const isLocked = el.dataset.col && el.dataset.row;
+
+    const lockHandle = document.createElement('button');
+    lockHandle.classList.add('handle', 'lock', 'none');
+    lockHandle.innerHTML = isLocked ? `<svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+      <path d="M3 4V2C3 1.44772 3.44772 1 4 1H6C6.55228 1 7 1.44772 7 2V4M2 4H8C8.55228 4 9 4.44772 9 5V9C9 9.55228 8.55228 10 8 10H2C1.44772 10 1 9.55228 1 9V5C1 4.44772 1.44772 4 2 4Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>` : `<svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+      <path d="M3 4V2C3 1.44772 3.44772 1 4 1H6C6.55228 1 7 1.44772 7 2V4M2 4H8C8.55228 4 9 4.44772 9 5V9C9 9.55228 8.55228 10 8 10H2C1.44772 10 1 9.55228 1 9V5C1 4.44772 1.44772 4 2 4Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M3.5 6L6.5 9M3.5 9L6.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>`;
+
+    lockHandle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isLocked = el.dataset.col && el.dataset.row;
+      if (isLocked) {
+        delete el.dataset.col;
+        delete el.dataset.row;
+        this._applyPosition(wrap, el);
+        lockHandle.innerHTML = `<svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path d="M3 4V2C3 1.44772 3.44772 1 4 1H6C6.55228 1 7 1.44772 7 2V4M2 4H8C8.55228 4 9 4.44772 9 5V9C9 9.55228 8.55228 10 8 10H2C1.44772 10 1 9.55228 1 9V5C1 4.44772 1.44772 4 2 4Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M3.5 6L6.5 9M3.5 9L6.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>`;
+      } else {
+        let { gridColumn, gridRow } = this._getComputedPosition(wrap);
+        console.log('Computed position for locking:', gridColumn, gridRow);
+        el.dataset.col = gridColumn;
+        el.dataset.row = gridRow;
+        this._applyPosition(wrap, el);
+        lockHandle.innerHTML = `<svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path d="M3 4V2C3 1.44772 3.44772 1 4 1H6C6.55228 1 7 1.44772 7 2V4M2 4H8C8.55228 4 9 4.44772 9 5V9C9 9.55228 8.55228 10 8 10H2C1.44772 10 1 9.55228 1 9V5C1 4.44772 1.44772 4 2 4Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>`;
+      }
+    });
+
+
     inner.appendChild(el);
     inner.appendChild(resizeHandle);
     inner.appendChild(moveHandle);
     inner.appendChild(deleteHandle);
+    inner.appendChild(lockHandle);
     wrap.appendChild(inner);
 
     inner.addEventListener('mouseenter', () => {
       resizeHandle.classList.remove('none');
       moveHandle.classList.remove('none');
       deleteHandle.classList.remove('none');
+      lockHandle.classList.remove('none');
     });
 
     inner.addEventListener('mouseleave', () => {
       resizeHandle.classList.add('none');
       moveHandle.classList.add('none');
       deleteHandle.classList.add('none');
+      lockHandle.classList.add('none');
     });
 
     this.grid.appendChild(wrap);
 
-    this._setupDrag(wrap, inner);
+    this._setupDrag(wrap, inner, el);
     this._setupResize(resizeHandle, wrap, inner, el);
 
     this._items.push({ wrap, el });
@@ -213,17 +267,19 @@ class AntroGrid extends HTMLElement {
   _applyPosition(wrap, el) {
     const w = parseInt(el.dataset.w || this._minW);
     const h = parseInt(el.dataset.h || this._minH);
-    wrap.style.gridColumn = `span ${w}`;
-    wrap.style.gridRow = `span ${h}`;
+
+    wrap.style.gridColumn = `${el.dataset.col? el.dataset.col + ' /' : ''} span ${w}`;
+    wrap.style.gridRow = `${el.dataset.row? el.dataset.row + ' /' : ''} span ${h}`;
     wrap.style.width = '';
     wrap.style.height = '';
   }
 
 
-  _setupDrag(wrap, inner) {
+  _setupDrag(wrap, inner, el) {
 
     const dragStart = (e) => {
-      if (!e.explicitOriginalTarget.closest("#move-handle")) {
+      const isLocked = el.dataset.col && el.dataset.row;
+      if (!e.explicitOriginalTarget.closest("#move-handle") || isLocked) {
         e.preventDefault();
         return;
       }
@@ -339,25 +395,6 @@ class AntroGrid extends HTMLElement {
 }
 
 customElements.define('antro-grid', AntroGrid);
-
-function debounce(func, wait) {
-  let timeout;
-  return function(...args) {
-    clearTimeout(timeout);
-    timeout = setTimeout(() => func.apply(this, args), wait);
-  };
-}
-
-// function throttle(func, limit) {
-//   let inThrottle;
-//   return function(...args) {
-//     if (!inThrottle) {
-//       func.apply(this, args);
-//       inThrottle = true;
-//       setTimeout(() => inThrottle = false, limit);
-//     }
-//   };
-// }
 
 function tryParseJson(str, fallback) {
   try {
